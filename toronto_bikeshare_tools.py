@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 
 import os
+import pathlib
 
 min_trip_duration = 60
 max_trip_duration = 8*3600
@@ -23,7 +24,7 @@ stations_data.set_index('station_id', inplace=True)
 minimal_stations_data = stations_data.drop(columns=['name', 'physical_configuration', 'address', 'is_charging_station', 'rental_methods', 'groups', 'obcn', 'short_name', 'nearby_distance', '_ride_code_support', 'rental_uris', 'post_code', 'cross_street'])
 
 
-def read_usage_data(path):
+def read_usage_data_csv(path):
     df = pd.read_csv(path, encoding='ISO-8859-1', parse_dates=['Start Time', 'End Time'], index_col=0)
 
     # sometimes there's an issue with the encoding so we have to make sure that the index column is labelled correctly
@@ -35,6 +36,10 @@ def read_usage_data(path):
 
     df.drop(columns=['Start Station Name', 'End Station Name'], inplace=True)
 
+    # sometimes (Start/End) Station Id can be NaN, just replace those with 0s since Station Id will always be ~7000 or 8000 otherwise
+    df['Start Station Id'] = df['Start Station Id'].fillna(0)
+    df['End Station Id'] = df['End Station Id'].fillna(0)
+
     # we can cut the size of the data frame in half by downcasting the types here
     df['Trip  Duration'] = pd.to_numeric(df['Trip  Duration'], downcast='unsigned')
     df['Start Station Id'] = pd.to_numeric(df['Start Station Id'], downcast='unsigned')
@@ -45,20 +50,32 @@ def read_usage_data(path):
     
     return df
 
-def usage_data_path(month, year):
+def read_usage_data_parquet(path):
+    df = pd.read_parquet(path)
+    return df
+
+def read_usage_data(path, filetype='csv'):
+    if filetype == 'csv':
+        return read_usage_data_csv(path)
+    elif filetype == 'parquet':
+        return read_usage_data_parquet(path)
+    else:
+        raise ValueError(f'filetype not recognized. Given {filetype}, expected csv or parquet')
+
+def usage_data_path(month, year, filetype='csv'):
     if type(month) is not int:
         raise TypeError('month must be an int, given {}'.format(type(month)))
     if type(year) is not int:
         raise TypeError('year must be an int, given {}'.format(type(year)))
     
     if month < 10:
-        return os.path.join(f'data/bikeshare-ridership-{year}', f'Bike share ridership {year}-0{month}.csv')
+        return os.path.join(f'data/bikeshare-ridership-{year}', f'Bike share ridership {year}-0{month}.{filetype}')
     else:
-        return os.path.join(f'data/bikeshare-ridership-{year}', f'Bike share ridership {year}-{month}.csv')
+        return os.path.join(f'data/bikeshare-ridership-{year}', f'Bike share ridership {year}-{month}.{filetype}')
 
 offset_mod = lambda a,b,n: int(a - b*np.floor_divide(a-n,b))
 
-def read_multiple_usage_data(start_month, start_year, end_month, end_year):
+def read_multiple_usage_data(start_month, start_year, end_month, end_year, filetype='csv'):
     data_frames = []
 
     for i in range(end_month-start_month+1 + 12*(end_year-start_year)):
@@ -66,7 +83,7 @@ def read_multiple_usage_data(start_month, start_year, end_month, end_year):
         year = start_year + (start_month + i - 1)//12
 
         try:
-            data_frames.append(read_usage_data(usage_data_path(month, year)))
+            data_frames.append(read_usage_data(usage_data_path(month, year, filetype), filetype))
         except:
             print(f'something went wrong at {month} {year}')
 
@@ -76,17 +93,22 @@ def prepare_usage_data(raw_usage_data):
     usage_data = raw_usage_data[(raw_usage_data['Trip  Duration'] >= min_trip_duration) & (raw_usage_data['Trip  Duration'] <= max_trip_duration)]
     usage_data = usage_data[usage_data['Start Station Id'].isin(stations_data.index) & usage_data['End Station Id'].isin(stations_data.index)]
 
-    # sometimes this doesn't copy over correctly from raw_usage_data, so I'll just redo it here
-    usage_data['Trip  Duration'] = pd.to_numeric(usage_data['Trip  Duration'], downcast='unsigned')
-    usage_data['Start Station Id'] = pd.to_numeric(usage_data['Start Station Id'], downcast='unsigned')
-    usage_data['End Station Id'] = pd.to_numeric(usage_data['End Station Id'], downcast='unsigned')
-    usage_data['Bike Id'] = pd.to_numeric(usage_data['Bike Id'], downcast='unsigned')
-    usage_data['User Type'] = usage_data['User Type'].astype('category')
-    usage_data['Model'] = usage_data['Model'].astype('category')
-
     return usage_data
 
+def convert_usage_csv_to_parquet(path, overwrite=False):
+    new_path = path.removesuffix('.csv') + '.parquet'
+    if not os.path.exists(new_path) or overwrite:
+        data = read_usage_data(path)
+        data.to_parquet(new_path)
+        return True
+    return False
 
+def convert_all_usage_csv_to_parquet(directory, overwrite=False):
+    for path in pathlib.Path(directory).rglob('*.csv'):
+        converted = convert_usage_csv_to_parquet(str(path), overwrite)
+        if converted:
+            print(f'converted {path} to parquet')
+    return None
 
 def data_between_time(data, time_index, start, end):
     return data.iloc[time_index.indexer_between_time(start, end)]
