@@ -89,6 +89,17 @@ def read_multiple_usage_data(start_month, start_year, end_month, end_year, filet
 
     return pd.concat(data_frames)
 
+def read_multiple_year_single_month_usage_data(month, years, filetype='csv'):
+    data_frames = []
+
+    for year in years:
+        try:
+            data_frames.append(read_usage_data(usage_data_path(month, year, filetype), filetype))
+        except:
+            print(f'something went wrong at {month} {year}')
+
+    return pd.concat(data_frames)
+
 def prepare_usage_data(raw_usage_data):
     usage_data = raw_usage_data[(raw_usage_data['Trip  Duration'] >= min_trip_duration) & (raw_usage_data['Trip  Duration'] <= max_trip_duration)]
     usage_data = usage_data[usage_data['Start Station Id'].isin(stations_data.index) & usage_data['End Station Id'].isin(stations_data.index)]
@@ -157,18 +168,34 @@ def get_sources_sinks_days_months_years_time_range(data, time_index, start_time,
 
     return combined_df
 
+def get_sources_sinks_days_time_range(data, time_index, start_time, end_time, days):
+    this_data = data_between_time(data, time_index, start_time, end_time)
+    this_data = data_on_days(this_data, days)
+    
+    sources = this_data.value_counts('Start Station Id')
+    sinks = this_data.value_counts('End Station Id')
+    
+    sources.name = 'source counts'
+    sinks.name = 'sink counts'
+
+    combined_df = pd.DataFrame({'source counts': sources, 'sink counts': sinks})
+    combined_df.fillna(0, inplace=True)
+
+    return combined_df
+
 def get_stations_data_source_sink_date_time_range(data, time_index, start_date, end_date, start_time, end_time):
     sources_sinks = get_sources_sinks_date_time_range(data, time_index, start_date, end_date, start_time, end_time)
-
     augmented_stations_data = sources_sinks.join(minimal_stations_data)
-
     return augmented_stations_data
 
 def get_stations_data_source_sink_days_months_years_time_range(data, time_index, start_time, end_time, days, months, years):
     sources_sinks = get_sources_sinks_days_months_years_time_range(data, time_index, start_time, end_time, days, months, years)
-
     augmented_stations_data = sources_sinks.join(minimal_stations_data)
+    return augmented_stations_data
 
+def get_stations_data_source_sink_days_time_range(data, time_index, start_time, end_time, days):
+    sources_sinks = get_sources_sinks_days_time_range(data, time_index, start_time, end_time, days)
+    augmented_stations_data = sources_sinks.join(minimal_stations_data)
     return augmented_stations_data
 
 def get_net_sources_sinks(data_with_sources_sinks):
